@@ -3,6 +3,8 @@
 
 
 import json
+import lzma
+import os
 import threading
 import asyncio
 import websockets
@@ -13,9 +15,12 @@ class MockInsServer():
     def __init__(self, port):
         self.loop = asyncio.new_event_loop()
         self.port = port
+        self.symbols_dir = os.path.join(os.path.dirname(__file__), 'symbols')
+        self.stop_signal = self.loop.create_future()
+        self.semaphore = threading.Semaphore(value=0)
         self.thread = threading.Thread(target=self._run)
         self.thread.start()
-        self.stop_signal = self.loop.create_future()
+        self.semaphore.acquire()
 
     def close(self):
         self.loop.call_soon_threadsafe(lambda: self.stop_signal.set_result(0))
@@ -58,14 +63,19 @@ class MockInsServer():
         return web.json_response(data)
 
     async def task_serve(self):
-        app = web.Application()
-        app.add_routes([web.get('/{tail:.*}', self.handle)])
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, 'localhost', self.port)
-        await site.start()
-        await self.stop_signal
-        await runner.cleanup()
+        try:
+            app = web.Application()
+            app.router.add_static('/t/md/symbols', self.symbols_dir, show_index=True)
+            app.add_routes([web.get('/{tail:.*}', self.handle)])
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, '127.0.0.1', self.port)
+            await site.start()
+            self.semaphore.release()
+            await self.stop_signal
+        finally:
+            await runner.shutdown()
+            await runner.cleanup()
 
     def _run(self):
         asyncio.set_event_loop(self.loop)
@@ -82,6 +92,7 @@ class MockServer():
         self.td_port = 5200
         self._expecting = {}
         self.stop_signal = self.loop.create_future()
+        self.semaphore = threading.Semaphore(value=0)
 
     def close(self):
         assert not self._expecting
@@ -93,7 +104,8 @@ class MockServer():
         try:
             while True:
                 s = await self.connections["md"].recv()
-                await self.on_received("md", json.loads(s))
+                pack = json.loads(s)
+                await self.on_received("md", pack)
         except websockets.exceptions.ConnectionClosedOK as e:
             assert e.code == 1000
 
@@ -101,20 +113,28 @@ class MockServer():
         await self.on_connected("td", connection)
         while True:
             s = await self.connections["td"].recv()
-            await self.on_received("td", json.loads(s))
+            pack = json.loads(s)
+            if pack["aid"] == "peek_message":
+                continue
+            await self.on_received("td", pack)
 
     def run(self, script_file_name):
         self.script_file_name = script_file_name
         self.thread = threading.Thread(target=self._run)
         self.thread.start()
+        self.semaphore.acquire()
 
     async def _server(self):
-        async with websockets.serve(self._handler_md, "localhost", self.md_port) as self.server_md:
-            async with websockets.serve(self._handler_td, "localhost", self.td_port) as self.server_td:
+        async with websockets.serve(self._handler_md, "127.0.0.1", self.md_port) as self.server_md:
+            async with websockets.serve(self._handler_td, "127.0.0.1", self.td_port) as self.server_td:
+                self.semaphore.release()
                 await self.stop_signal
 
     def _run(self):
-        self.script_file = open(self.script_file_name, "rt", encoding="gbk")
+        if str.endswith(self.script_file_name, "lzma"):
+            self.script_file = lzma.open(self.script_file_name, "rt", encoding="utf-8")
+        else:  # 用于本地script还未压缩成lzma文件时运行测试用例
+            self.script_file = open(self.script_file_name, "rt", encoding="utf-8")
         asyncio.set_event_loop(self.loop)
         self.loop.run_until_complete(self._server())
 
@@ -124,9 +144,9 @@ class MockServer():
         for line in self.script_file:
             # 2019-09-09 16:22:40,652 - DEBUG - websocket message sent to wss://openmd.shinnytech.com/t/md/front/mobile: {"aid": "subscribe_quote",
             item = {}
-            if "websocket message sent" in line:
+            if "websocket message sent" in line and "peek_message" not in line:  # 在api角度的sent
                 item["type"] = "sent"
-            elif "websocket message received" in line:
+            elif "websocket message received" in line:  # 在api角度的received
                 item["type"] = "received"
             else:
                 continue
@@ -156,6 +176,7 @@ class MockServer():
     async def on_received(self, source, pack):
         if not self._expecting:
             await self._process_script()
-        assert self._expecting["source"] == source
-        assert self._expecting["content"] == pack
-        await self._process_script()
+        if pack["aid"] != "peek_message":
+            assert self._expecting["source"] == source
+            assert self._expecting["content"] == pack
+            await self._process_script()

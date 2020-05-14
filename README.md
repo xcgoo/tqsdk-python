@@ -2,13 +2,13 @@
   <img src ="https://raw.githubusercontent.com/shinnytech/tqsdk-python/master/doc/logo.png"/>
 </p>
 <p align="center">
-    <img src ="https://img.shields.io/badge/version-1.1.0-blueviolet.svg"/>
+    <img src ="https://img.shields.io/badge/version-1.8.0-blueviolet.svg"/>
     <img src ="https://img.shields.io/badge/platform-windows|linux|macos-green.svg"/>
     <img src ="https://img.shields.io/badge/python-3.6+-blue.svg" />
     <img src ="https://img.shields.io/github/license/shinnytech/tqsdk-python.svg?color=orange"/>
 </p>
 
-TqSdk 量化交易策略程序开发包
+TqSdk 天勤量化交易策略程序开发包
 ====================================
 TqSdk 是一个由[信易科技](https://www.shinnytech.com)发起并贡献主要代码的开源 python 库. 
 依托[快期多年积累成熟的交易及行情服务器体系](https://www.shinnytech.com/diff), TqSdk 支持用户使用极少的代码量构建各种类型的量化交易策略程序, 
@@ -54,16 +54,15 @@ Features
 ---------------
 TqSdk 提供的功能可以支持从简单到复杂的各类策略程序.
 
-* **用户无需向期货公司申请AppId, 即可满足穿透式监管信息采集规范要求**
-* 提供当前所有可交易合约从上市开始的 **全部Tick数据和K线数据**
-* 支持数十家期货公司的 **实盘交易**
+* **公司级数据运维**，提供当前所有可交易合约从上市开始的 **全部Tick数据和K线数据**
+* 支持市场上90%的期货公司 **实盘交易**
 * 支持 **模拟交易**
 * 支持 **Tick级和K线级回测**, 支持 **复杂策略回测**
 * 提供近百个 **技术指标函数及源码**
 * 用户无须建立和维护数据库, 行情和交易数据全在 **内存数据库** , 无访问延迟
-* 优化支持 **pandas** 和 numpy 库
+* 优化支持 **pandas** 和 **numpy** 库
 * 无强制框架结构, 支持任意复杂度的策略, 在一个交易策略程序中使用多个品种的K线/实时行情并交易多个品种
-
+* 配合开发者支持工具，能够进行**交易信号打点**，支持**自定义指标画图**
 
 Installation
 -------------------------------------------------
@@ -80,11 +79,15 @@ Documentation
 
 在线问答社区: https://www.shinnytech.com/qa
 
-用户交流QQ群: 619870862
+知乎账户【天勤量化】：https://www.zhihu.com/org/tian-qin-liang-hua/activities
+
+用户交流QQ群: **619870862** (目前只允许给我们点过STAR的同学加入, 加群时请提供github用户名)
+
 	
 Gui
 -------------------------------------------------
-TqSdk本身不包含任何GUI组件. 免费的 [天勤软件](https://www.shinnytech.com/tianqin) 可以与TqSdk配合使用, 提供完整的图形界面.
+TqSdk本身自带的web_gui功能，简单一行参数即可支持调用图形化界面，详情参考[web_gui](https://doc.shinnytech.com/pysdk/latest/usage/web_gui.html) 
+<img alt="TqSdk web_gui" src="https://raw.githubusercontent.com/shinnytech/tqsdk-python/master/doc/images/web_gui_backtest.png">
 
 About us
 -------------------------------------------------

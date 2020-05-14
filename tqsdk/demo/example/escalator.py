@@ -12,23 +12,23 @@ from tqsdk import TqApi, TargetPosTask
 from tqsdk.ta import MA
 
 # 设置合约
-SYMBOL = "SHFE.au1912"
+SYMBOL = "SHFE.au2006"
 # 设置均线长短周期
 MA_SLOW, MA_FAST = 8, 40
 
 api = TqApi()
-quote = api.get_quote(SYMBOL)
 klines = api.get_kline_serial(SYMBOL, 60 * 60 * 24)
 quote = api.get_quote(SYMBOL)
 position = api.get_position(SYMBOL)
 target_pos = TargetPosTask(api, SYMBOL)
+
 
 # K线收盘价在这根K线波动范围函数
 
 
 def kline_range(num):
     kl_range = (klines.iloc[num].close - klines.iloc[num].low) / \
-        (klines.iloc[num].high - klines.iloc[num].low)
+               (klines.iloc[num].high - klines.iloc[num].low)
     return kl_range
 
 

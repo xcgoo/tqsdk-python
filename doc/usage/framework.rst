@@ -5,13 +5,13 @@
 
 TqApi
 ----------------------------------------------------
-:py:class:`tqsdk.api.TqApi` 是 TqSdk 的核心类. 通常情况下, 每个使用了 TqSdk 的程序都应该包括一个 TqApi 实例::
+:py:class:`tqsdk.api.TqApi` 是 TqSdk 的核心类. 通常情况下, 每个使用了 TqSdk 的程序都应该包括 **一个** TqApi 实例::
 
     api = TqApi()
 
 TqApi 实例负责:
 
-* 建立websocket连接到服务器(或天勤终端).
+* 建立websocket连接到服务器.
 * 在内存中建立数据存储区, 接收行情和交易业务数据包, 并自动维护数据更新.
 * 发出交易指令.
 * 管理协程任务.
@@ -19,10 +19,9 @@ TqApi 实例负责:
 
 TqApi 创建时, 需要提供一个account参数. 它可以是:
 
-* 一个 :py:class:`tqsdk.api.TqAccount` 实例: 使用实盘帐号, 直连行情和交易服务器(不通过天勤终端), 需提供期货公司/帐号/密码
+* 一个 :py:class:`tqsdk.account.TqAccount` 实例: 使用实盘帐号, 直连行情和交易服务器, 需提供期货公司/帐号/密码
 * 一个 :py:class:`tqsdk.sim.TqSim` 实例: 使用 Api 自带的模拟功能, 直连行情服务器接收行情数据
 * 如果未提供 account 参数, 或者 account == None, 则会自动创建并使用一个 :py:class:`tqsdk.sim.TqSim` 实例
-* 一个 :py:class:`tqsdk.sim.TqApi` 实例: 对 master TqApi 创建一个 slave 副本, 以便在其它线程中使用
 
 TqApi 的其它构建参数请见 :py:class:`tqsdk.api.TqApi`
 
@@ -34,16 +33,18 @@ TqApi 的其它构建参数请见 :py:class:`tqsdk.api.TqApi`
 * 实际发出网络数据包. 例如, 策略程序用 insert_order 函数下单, 实际的报单指令是在 insert_order 后调用 :py:meth:`~tqsdk.api.TqApi.wait_update` 时发出的
 * 让正在运行中的后台任务获得动作机会．例如, 策略程序中创建了一个后台调仓任务, 这个任务只会在 :py:meth:`~tqsdk.api.TqApi.wait_update` 时发出交易指令
 * 尝试从服务器接收一个数据包, 并用收到的数据包更新内存中的业务数据截面.
-* 如果没有收到数据包，则挂起等待
+* 如果没有收到数据包，则挂起等待，如果要避免长时间挂起，可通过设置 :py:meth:`~tqsdk.api.TqApi.wait_update` 中的deadline参数，设置等待截止时间
 
 .. figure:: ../images/wait_update.png
 
-因此, TqSdk 要求策略程序必须反复调用 :py:meth:`~tqsdk.api.TqApi.wait_update`, 才能保证整个程序正常运行. 一般会将 :py:meth:`~tqsdk.api.TqApi.wait_update` 放在一个循环中反复调用::
+因此, TqSdk 要求策略程序必须反复调用 :py:meth:`~tqsdk.api.TqApi.wait_update`, 才能保证整个程序正常运行. 一般会将 :py:meth:`~tqsdk.api.TqApi.wait_update` 放在一个循环中反复调用
+（注: 若跳出循环，程序结束前需调用 api.close() 释放资源)::
 
     while True:             #一个循环
         api.wait_update()   #总是调用 wait_update, 当数据有更新时 wait_update 函数返回, 执行下一句
         do_some_thing()     #每当数据有变更时, 执行自己的代码, 然后循环回去再做下一次 wait_update
 
+    #注：若跳出循环并运行到程序末尾，在结束运行前需调用 api.close() 函数以关闭天勤接口实例并释放相应资源，请见下文 “一个典型程序的结构”
 
 内存数据及数据更新
 ----------------------------------------------------
@@ -64,6 +65,11 @@ TqApi 实例内存中保存了一份完整业务数据截面, 包括行情/K线�
     if api.is_changing(account, "balance"):
         print("账户权益变化")                    #只有资金账户中的权益值变化的时候打出 "账户权益变化"
 
+**建议跨交易日重启代码** ,否则可能导致:
+    1. 合约信息不能及时更新（如：有新上市的合约,保持登录的第二个交易日就没有这个合约信息)
+    2. 前一交易日的未成交委托单没有删除\更新
+    3. 如果使用了交易辅助工具 TargetPosTask 并且收盘后有挂单，导致 TargetPosTask 在下一交易日无法继续执行
+    4. 其他未知问题.
 
 一个典型程序的结构
 ----------------------------------------------------
@@ -87,5 +93,6 @@ TqApi 实例内存中保存了一份完整业务数据截面, 包括行情/K线�
             target_pos.set_target_volume(0)                     ##如果触发了，则通过 target_pos 将 SHFE.rb1901 的目标持仓设置为0手(即空仓)
             break
 
+    api.close()                                                 #注意：程序结束运行前需调用此函数以关闭天勤接口实例并释放相应资源，同时此函数会包含发送最后一次wait_update信息传输
     #至此就完成一次完整的开平仓流程，如果平仓后还需再判断开仓条件可以把开仓循环和平仓循环再套到一个大循环中。
 

@@ -2,35 +2,10 @@
 #:  -*- coding: utf-8 -*-
 __author__ = 'chengzhi'
 
-from collections.abc import MutableMapping
 import copy
 
-
-class Entity(MutableMapping):
-    def __setitem__(self, key, value):
-        return self.__dict__.__setitem__(key, value)
-
-    def __delitem__(self, key):
-        return self.__dict__.__delitem__(key)
-
-    def __getitem__(self, key):
-        return self.__dict__.__getitem__(key)
-
-    def __iter__(self):
-        return iter({k: v for k, v in self.__dict__.items() if not k.startswith("_")})
-
-    def __len__(self):
-        return len({k: v for k, v in self.__dict__.items() if not k.startswith("_")})
-
-    def __str__(self):
-        return str({k: v for k, v in self.__dict__.items() if not k.startswith("_")})
-
-    def __repr__(self):
-        return '{}, D({})'.format(super(Entity, self).__repr__(),
-                                  {k: v for k, v in self.__dict__.items() if not k.startswith("_")})
-
-    def copy(self):
-        return copy.copy(self)
+from tqsdk.diff import _get_obj
+from tqsdk.entity import Entity
 
 
 class Quote(Entity):
@@ -48,6 +23,38 @@ class Quote(Entity):
         self.bid_price1 = float("nan")
         #: 买一量
         self.bid_volume1 = 0
+        #: 卖二价
+        self.ask_price2 = float("nan")
+        #: 卖二量
+        self.ask_volume2 = 0
+        #: 买二价
+        self.bid_price2 = float("nan")
+        #: 买二量
+        self.bid_volume2 = 0
+        #: 卖三价
+        self.ask_price3 = float("nan")
+        #: 卖三量
+        self.ask_volume3 = 0
+        #: 买三价
+        self.bid_price3 = float("nan")
+        #: 买三量
+        self.bid_volume3 = 0
+        #: 卖四价
+        self.ask_price4 = float("nan")
+        #: 卖四量
+        self.ask_volume4 = 0
+        #: 买四价
+        self.bid_price4 = float("nan")
+        #: 买四量
+        self.bid_volume4 = 0
+        #: 卖五价
+        self.ask_price5 = float("nan")
+        #: 卖五量
+        self.ask_volume5 = 0
+        #: 买五价
+        self.bid_price5 = float("nan")
+        #: 买五量
+        self.bid_volume5 = 0
         #: 最新价
         self.last_price = float("nan")
         #: 当日最高价
@@ -96,12 +103,43 @@ class Quote(Entity):
         self.underlying_symbol = ""
         #: 行权价
         self.strike_price = float("nan")
-        #: 涨跌
-        self.change = float("nan")
-        #: 涨跌幅
-        self.change_percent = float("nan")
+        #: 合约类型
+        self.ins_class = ""
+        #: 交易所内的合约代码
+        self.instrument_id = ""
         #: 合约是否已下市
         self.expired = False
+        #: 交易时间段
+        self.trading_time = TradingTime(self._api)
+        #: 到期具体日
+        self.expire_datetime = float("nan")
+        #: 到期月
+        self.delivery_month = 0
+        #: 到期年
+        self.delivery_year = 0
+        #: 期权方向
+        self.option_class = ""
+        #: 品种代码
+        self.product_id = ""
+
+    def _instance_entity(self, path):
+        super(Quote, self)._instance_entity(path)
+        self.trading_time = copy.copy(self.trading_time)
+        self.trading_time._instance_entity(path + ["trading_time"])
+
+
+class TradingTime(Entity):
+    """ TradingTime 是一个交易时间对象
+        它不是一个可单独使用的类，而是用于定义 Qoute 的 trading_time 字段的类型
+
+        (每个连续的交易时间段是一个列表，包含两个字符串元素，分别为这个时间段的起止点)"""
+
+    def __init__(self, api):
+        self._api = api
+        #: 白盘
+        self.day = []
+        #: 夜盘（注意：本字段中过了 24：00 的时间则在其基础往上加，如凌晨1点为 '25:00:00' ）
+        self.night = []
 
 
 class Kline(Entity):
@@ -142,14 +180,46 @@ class Tick(Entity):
         self.highest = float("nan")
         #: 当日最低价
         self.lowest = float("nan")
-        #: 卖一价
+        #: 卖1价
         self.ask_price1 = float("nan")
-        #: 卖一量
+        #: 卖1量
         self.ask_volume1 = 0
-        #: 买一价
+        #: 买1价
         self.bid_price1 = float("nan")
-        #:买一量
+        #: 买1量
         self.bid_volume1 = 0
+        #: 卖2价
+        self.ask_price2 = float("nan")
+        #: 卖2量
+        self.ask_volume2 = 0
+        #: 买2价
+        self.bid_price2 = float("nan")
+        #: 买2量
+        self.bid_volume2 = 0
+        #: 卖3价
+        self.ask_price3 = float("nan")
+        #: 卖3量
+        self.ask_volume3 = 0
+        #: 买3价
+        self.bid_price3 = float("nan")
+        #: 买3量
+        self.bid_volume3 = 0
+        #: 卖4价
+        self.ask_price4 = float("nan")
+        #: 卖4量
+        self.ask_volume4 = 0
+        #: 买4价
+        self.bid_price4 = float("nan")
+        #: 买4量
+        self.bid_volume4 = 0
+        #: 卖5价
+        self.ask_price5 = float("nan")
+        #: 卖5量
+        self.ask_volume5 = 0
+        #: 买5价
+        self.bid_price5 = float("nan")
+        #: 买5量
+        self.bid_volume5 = 0
         #: 当日成交量
         self.volume = 0
         #: 成交额
@@ -165,14 +235,18 @@ class Account(Entity):
         self._api = api
         #: 币种
         self.currency = ""
-        #: 昨日账户权益
+        #: 昨日账户权益(不包含期权)
         self.pre_balance = float("nan")
-        #: 静态权益 （静态权益 = 昨日结算的权益 + 今日入金 - 今日出金, 以服务器查询ctp后返回的金额为准）
+        #: 静态权益 （静态权益 = 昨日结算的权益 + 今日入金 - 今日出金, 以服务器查询ctp后返回的金额为准）(不包含期权)
         self.static_balance = float("nan")
-        #: 账户权益 （账户权益 = 动态权益 = 静态权益 + 平仓盈亏 + 持仓盈亏 - 手续费）
+        #: 账户权益 （账户权益 = 动态权益 = 静态权益 + 平仓盈亏 + 持仓盈亏 - 手续费 + 权利金 + 期权市值）
         self.balance = float("nan")
-        #: 可用资金
+        #: 可用资金（可用资金 = 账户权益 - 冻结保证金 - 保证金 - 冻结权利金 - 冻结手续费 - 期权市值）
         self.available = float("nan")
+        #: 期货公司返回的balance（ctp_balance = 静态权益 + 平仓盈亏 + 持仓盈亏 - 手续费 + 权利金）
+        self.ctp_balance = float("nan")
+        #: 期货公司返回的available（ctp_available = ctp_balance - 保证金 - 冻结保证金 - 冻结手续费 - 冻结权利金）
+        self.ctp_available = float("nan")
         #: 浮动盈亏
         self.float_profit = float("nan")
         #: 持仓盈亏
@@ -189,14 +263,16 @@ class Account(Entity):
         self.commission = float("nan")
         #: 冻结权利金
         self.frozen_premium = float("nan")
-        #: 本交易日内交纳的权利金
+        #: 本交易日内收入-交纳的权利金
         self.premium = float("nan")
         #: 本交易日内的入金金额
         self.deposit = float("nan")
         #: 本交易日内的出金金额
         self.withdraw = float("nan")
-        #: 风险度
+        #: 风险度（风险度 = 保证金 / 账户权益）
         self.risk_ratio = float("nan")
+        #: 期权市值
+        self.market_value = float("nan")
 
 
 class Position(Entity):
@@ -244,17 +320,17 @@ class Position(Entity):
         self.open_price_long = float("nan")
         #: 空头开仓均价
         self.open_price_short = float("nan")
-        #: 多头开仓市值
+        #: 多头开仓成本
         self.open_cost_long = float("nan")
-        #: 空头开仓市值
+        #: 空头开仓成本
         self.open_cost_short = float("nan")
         #: 多头持仓均价
         self.position_price_long = float("nan")
         #: 空头持仓均价
         self.position_price_short = float("nan")
-        #: 多头持仓市值
+        #: 多头持仓成本
         self.position_cost_long = float("nan")
-        #: 空头持仓市值
+        #: 空头持仓成本
         self.position_cost_short = float("nan")
         #: 多头浮动盈亏
         self.float_profit_long = float("nan")
@@ -274,6 +350,12 @@ class Position(Entity):
         self.margin_short = float("nan")
         #: 占用保证金
         self.margin = float("nan")
+        #: 期权权利方市值(始终 >= 0)
+        self.market_value_long = float("nan")
+        #: 期权义务方市值(始终 <= 0)
+        self.market_value_short = float("nan")
+        #: 期权市值
+        self.market_value = float("nan")
 
     @property
     def pos(self):
@@ -281,6 +363,12 @@ class Position(Entity):
         净持仓手数
 
         :return: int, ==0表示无持仓或多空持仓手数相等. <0表示空头持仓大于多头持仓, >0表示多头持仓大于空头持仓
+
+        注: 本字段是由 pos_long 等字段计算出来的，而非服务器发回的原始数据中的字段，则：
+            1. is_changing() 是判断服务器发回的数据字段，因此不能用于 is_changing() 判断。
+            2. 在直接 print(position) 时不会显示出此字段。
+            3. 只能用 position.pos 方式取值，不能用 position["pos"] 方式。
+            4. pos_long, pos_short, orders这三个字段同理。
         """
         return self.pos_long - self.pos_short
 
@@ -309,7 +397,7 @@ class Position(Entity):
 
         :return: dict, 其中每个元素的key为委托单ID, value为 :py:class:`~tqsdk.objs.Order`
         """
-        tdict = self._api._get_obj(self._api._data, ["trade", self._api._account.account_id, "orders"])
+        tdict = _get_obj(self._api._data, ["trade", self._api._account._account_id, "orders"])
         fts = {order_id: order for order_id, order in tdict.items() if (not order_id.startswith(
             "_")) and order.instrument_id == self.instrument_id and order.exchange_id == self.exchange_id and order.status == "ALIVE"}
         return fts
@@ -350,6 +438,7 @@ class Order(Entity):
         self.last_msg = ""
         #: 委托单状态, ALIVE=有效, FINISHED=已完
         self.status = ""
+
         self._this_session = False
 
     @property
@@ -358,13 +447,19 @@ class Order(Entity):
         判定这个委托单是否确定已死亡（以后一定不会再产生成交）
 
         :return: 确定委托单已死时，返回 True, 否则返回 False. 注意，返回 False 不代表委托单还存活，有可能交易所回来的信息还在路上或者丢掉了
+
+        注: 本字段是由 status 等字段计算出来的，而非服务器发回的原始数据中的字段，则：
+            1. is_changing() 是判断服务器发回的数据字段，因此不能用于 is_changing() 判断。
+            2. 在直接 print(order) 时不会显示出此字段。
+            3. 只能用 order.is_dead 方式取值，不能用 order["is_dead"] 方式。
+            4. is_online, is_error, trade_price, trade_records 这四个字段同理。
         """
         return self.status == "FINISHED"
 
     @property
     def is_online(self):
         """
-        判定这个委托单是否确定已报入交易所（即下单成功，无论是否成交）
+        判定这个委托单是否确定已报入交易所并等待成交
 
         :return: 确定委托单已报入交易所时，返回 True, 否则返回 False. 注意，返回 False 不代表确定未报入交易所，有可能交易所回来的信息还在路上或者丢掉了
         """
@@ -386,7 +481,7 @@ class Order(Entity):
 
         :return: 当委托单部分成交或全部成交时, 返回成交部分的平均成交价. 无任何成交时, 返回 nan
         """
-        tdict = self._api._get_obj(self._api._data, ["trade", self._api._account.account_id, "trades"])
+        tdict = _get_obj(self._api._data, ["trade", self._api._account._account_id, "trades"])
         sum_volume = sum([trade.volume for trade_id, trade in tdict.items() if
                           (not trade_id.startswith("_")) and trade.order_id == self.order_id])
         if sum_volume == 0:
@@ -402,7 +497,7 @@ class Order(Entity):
 
         :return: dict, 其中每个元素的key为成交ID, value为 :py:class:`~tqsdk.objs.Trade`
         """
-        tdict = self._api._get_obj(self._api._data, ["trade", self._api._account.account_id, "trades"])
+        tdict = _get_obj(self._api._data, ["trade", self._api._account._account_id, "trades"])
         fts = {trade_id: trade for trade_id, trade in tdict.items() if
                (not trade_id.startswith("_")) and trade.order_id == self.order_id}
         return fts

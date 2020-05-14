@@ -10,5 +10,8 @@
     mddatas.rst
     ta.rst
     trade.rst
+    option_trade.rst
     targetpostask.rst
     backtest.rst
+    replay.rst
+    web_gui.rst

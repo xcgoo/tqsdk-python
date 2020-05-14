@@ -1,9 +1,12 @@
-websockets>=6.0
+certifi
+websockets>=8.1
 requests
 numpy
 pandas>=0.24.0
-numba
 aiohttp
 pysimplegui
 matplotlib
 mplcursors
+simplejson
+selenium
+scipy

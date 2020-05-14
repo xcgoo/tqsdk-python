@@ -4,11 +4,18 @@ __author__ = 'limin'
 
 """
 tqsdk.tafunc 模块包含了一批用于技术指标计算的函数
+(函数基本保持 参数为pandas.Series类型则返回值为pandas.Series类型)
 """
 
 import datetime
-import pandas as pd
+import math
+from typing import Union
+
 import numpy as np
+import pandas as pd
+from scipy import stats
+
+from tqsdk.datetime import _get_period_timestamp
 
 
 def ref(series, n):
@@ -681,6 +688,7 @@ def time_to_ns_timestamp(input_time):
 
     Example::
 
+        from tqsdk.tafunc import time_to_ns_timestamp
         print(time_to_ns_timestamp("2019-10-14 14:26:01.000000"))  # 将%Y-%m-%d %H:%M:%S.%f 格式的str类型转为纳秒时间戳
         print(time_to_ns_timestamp(1571103122))  # 将秒级转为纳秒时间戳
         print(time_to_ns_timestamp(datetime.datetime(2019, 10, 14, 14, 26, 1)))  # 将datetime.datetime时间转为纳秒时间戳
@@ -707,6 +715,7 @@ def time_to_s_timestamp(input_time):
 
     Example::
 
+        from tqsdk.tafunc import time_to_s_timestamp
         print(time_to_s_timestamp(1.57103449e+18))  # 将纳秒级时间戳转为秒级时间戳
         print(time_to_s_timestamp("2019-10-14 14:26:01.000000"))  # 将%Y-%m-%d %H:%M:%S.%f 格式的str类型时间转为秒级时间戳
         print(time_to_s_timestamp(datetime.datetime(2019, 10, 14, 14, 26, 1)))  # 将datetime.datetime时间转为秒时间戳
@@ -732,6 +741,7 @@ def time_to_str(input_time):
 
     Example::
 
+        from tqsdk.tafunc import time_to_str
         print(time_to_str(1.57103449e+18))  # 将纳秒级时间戳转为%Y-%m-%d %H:%M:%S.%f 格式的str类型时间
         print(time_to_str(1571103122))  # 将秒级时间戳转为%Y-%m-%d %H:%M:%S.%f 格式的str类型时间
         print(time_to_str(datetime.datetime(2019, 10, 14, 14, 26, 1)))  # 将datetime.datetime时间转为%Y-%m-%d %H:%M:%S.%f 格式的str类型时间
@@ -762,6 +772,7 @@ def time_to_datetime(input_time):
 
     Example::
 
+        from tqsdk.tafunc import time_to_datetime
         print(time_to_datetime(1.57103449e+18))  # 将纳秒级时间戳转为datetime.datetime时间
         print(time_to_datetime(1571103122))  # 将秒级时间戳转为datetime.datetime时间
         print(time_to_datetime("2019-10-14 14:26:01.000000"))  # 将%Y-%m-%d %H:%M:%S.%f 格式的str类型时间转为datetime.datetime时间
@@ -771,3 +782,587 @@ def time_to_datetime(input_time):
     # 转为datetime.datetime类型
     dt = datetime.datetime.fromtimestamp(ts)
     return dt
+
+
+def barlast(cond):
+    """
+    返回一个序列，其中每个值表示从上一次条件成立到当前的周期数
+
+    (注： 如果从cond序列第一个值到某个位置之间没有True，则此位置的返回值为 -1； 条件成立的位置上的返回值为0)
+
+
+    Args:
+        cond (pandas.Series): 条件序列(序列中的值需为 True 或 False)
+
+    Returns:
+        pandas.Series : 周期数序列（其长度和 cond 相同；最后一个值即为最后一次条件成立到最新一个数据的周期数）
+
+    Example::
+
+        from tqsdk import TqApi
+        from tqsdk.tafunc import barlast
+
+        api = TqApi()
+        klines = api.get_kline_serial("SHFE.cu1912", 60)
+        # print(list(klines.close))
+        # print(list(klines.open))
+        # print(list(klines.close > klines.open))
+        n = barlast(klines.close > klines.open)  # 获取周期数序列
+        print(list(n))
+        print(n.iloc[-1])  # 获取最后一根k线到上一次满足 "收盘价大于开盘价" 条件的k线的周期数
+        api.close()
+
+    """
+    cond = cond.to_numpy()
+    v = np.array(~cond, dtype=np.int)
+    c = np.cumsum(v)
+    x = c[cond]
+    d = np.diff(np.concatenate(([0], x)))
+    if len(d) == 0:  # 如果cond长度为0或无True
+        return pd.Series([-1] * len(cond))
+    v[cond] = -d
+    r = np.cumsum(v)
+    r[:x[0]] = -1
+    return pd.Series(r)
+
+
+def _get_t_series(series: pd.Series, dur: int, expire_datetime: int):
+    t = pd.Series(pd.to_timedelta(expire_datetime - (series / 1e9 + dur), unit='s'))
+    return (t.dt.days * 86400 + t.dt.seconds) / (360 * 86400)
+
+
+def _get_d1(series: pd.Series, k: float, r: float, v: Union[float, pd.Series], t: Union[float, pd.Series]):
+    return pd.Series(
+        np.where((v <= 0) | (t <= 0), np.nan, (np.log(series / k) + (r + 0.5 * np.power(v, 2)) * t) / (v * np.sqrt(t))))
+
+
+def _get_cdf(series: pd.Series):
+    s = series.loc[series.notna()]
+    return series.loc[series.isna()].append(pd.Series(stats.norm.cdf(s), index=s.index), verify_integrity=True)
+
+
+def _get_pdf(series: pd.Series):
+    s = series.loc[series.notna()]
+    return series.loc[series.isna()].append(pd.Series(stats.norm.pdf(s), index=s.index), verify_integrity=True)
+
+
+def get_t(df, expire_datetime):
+    """
+    计算 K 线序列对应的年化到期时间，主要用于计算期权相关希腊指标时，需要得到计算出序列对应的年化到期时间
+
+    Args:
+        df (pandas.DataFrame): Dataframe 格式的 K 线序列
+
+        expire_datetime (int): 到期日, 秒级时间戳
+
+    Returns:
+        pandas.Series : 返回的 df 对应的年化时间序列
+
+    Example::
+
+        from tqsdk import TqApi, tafunc
+
+        api = TqApi()
+        quote = api.get_quote('SHFE.cu2006C45000')
+        klines = api.get_kline_serial(['SHFE.cu2006C45000', 'SHFE.cu2006'], 24 * 60 * 60, 50)
+        t = tafunc.get_t(klines, quote.expire_datetime)
+        print(t)
+        api.close()
+    """
+    return pd.Series(_get_t_series(df["datetime"], df["duration"], expire_datetime))
+
+
+def get_his_volatility(df, quote):
+    """
+    计算某个合约的历史波动率
+
+    Args:
+        df (pandas.DataFrame): Dataframe 格式的 K 线序列
+
+        quote (tqsdk.objs.Quote): df 序列对应合约对象
+
+    Returns:
+        float : 返回的 df 对应的历史波动率
+
+    Example::
+
+        from tqsdk import TqApi, tafunc
+
+        api = TqApi()
+        quote = api.get_quote('SHFE.cu2006')
+        klines = api.get_kline_serial('SHFE.cu2006', 24 * 60 * 60, 50)
+        v = tafunc.get_his_volatility(klines, quote)
+        print(v)
+        api.close()
+    """
+    if quote and quote.instrument_id == df["symbol"][0]:
+        trading_time = quote.trading_time
+    else:
+        trading_time = None
+    return _get_volatility(df["close"], df["duration"], trading_time)
+
+
+def _get_volatility(series: pd.Series, dur: Union[pd.Series, int] = 86400, trading_time: list = None) -> float:
+    series_u = np.log(series.shift(1)[1:] / series[1:])
+    series_u = series_u[~np.isnan(series_u)]
+    if series_u.size < 2:  # 自由度小于2无法计算，返回一个默认值
+        return float("nan")
+    seconds_per_day = 24 * 60 * 60
+    dur = dur[0] if isinstance(dur, pd.Series) else dur
+    if dur < 24 * 60 * 60 and trading_time:
+        periods = _get_period_timestamp(0, trading_time.get("day", []) + trading_time.get("night", []))
+        seconds_per_day = sum([p[1] - p[0] for p in periods]) / 1e9
+    return math.sqrt((250 * seconds_per_day / dur) * np.cov(series_u))
+
+
+def get_bs_price(series, k, r, v, t, option_class):
+    """
+    计算期权 BS 模型理论价格
+
+    Args:
+        series (pandas.Series): 标的价格序列
+
+        k (float): 期权行权价
+
+        r (float): 无风险利率
+
+        v (float / pandas.Series): 波动率
+
+            * float: 对于 series 中每个元素都使用相同的 v 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 v 中对应的值计算理论价
+
+        t (float / pandas.Series): 年化到期时间，例如：还有 100 天到期，则年化到期时间为 100/360
+
+            * float: 对于 series 中每个元素都使用相同的 t 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 t 中对应的值计算理论价
+
+        option_class (str): 期权方向，必须是 "CALL" 或者 "PUT"，否则返回的序列值全部为 nan
+
+    Returns:
+        pandas.Series: 返回该序列理论价
+
+    Example::
+
+        import pandas as pd
+        from tqsdk import TqApi, tafunc
+
+        api = TqApi()
+        quote = api.get_quote("SHFE.cu2006")
+        ks = api.get_kline_serial("SHFE.cu2006", 24 * 60 * 60, 10)
+        v = tafunc.get_his_volatility(ks, quote)  # 历史波动率
+
+        option = api.get_quote("SHFE.cu2006C45000")
+        klines = api.get_kline_serial(["SHFE.cu2006C45000", "SHFE.cu2006"], 24 * 60 * 60, 10)
+        t = tafunc.get_t(klines, option.expire_datetime)
+        bs_price = tafunc.get_bs_price(klines["close1"], 45000, 0.025, v, t, option.option_class)  # 理论价
+        print(list(bs_price.round(2)))
+        api.close()
+    """
+    if option_class not in ["CALL", "PUT"]:
+        return pd.Series(np.full_like(series, float('nan')))
+    o = 1 if option_class == "CALL" else -1
+    d1 = _get_d1(series, k, r, v, t)
+    d2 = pd.Series(np.where(np.isnan(d1), np.nan, d1 - v * np.sqrt(t)))
+    return pd.Series(
+        np.where(np.isnan(d1), np.nan, o * (series * _get_cdf(o * d1) - k * np.exp(-r * t) * _get_cdf(o * d2))))
+
+
+def get_delta(series, k, r, v, t, option_class, d1=None):
+    """
+    计算期权希腊指标 delta 值
+
+    Args:
+        series (pandas.Series): 标的价格序列
+
+        k (float): 期权行权价
+
+        r (float): 无风险利率
+
+        v (float / pandas.Series): 波动率
+
+            * float: 对于 series 中每个元素都使用相同的 v 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 v 中对应的值计算理论价
+
+        t (float / pandas.Series): 年化到期时间，例如：还有 100 天到期，则年化到期时间为 100/360
+
+            * float: 对于 series 中每个元素都使用相同的 t 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 t 中对应的值计算理论价
+
+        option_class (str): 期权方向，必须是 "CALL" 或者 "PUT"，否则返回的序列值全部为 nan
+
+        d1 (None | pandas.Series): [可选] 序列对应的 BS 公式中 b1 值
+
+    Returns:
+        pandas.Series: 该序列的 delta 值
+
+
+    Example::
+
+        import pandas as pd
+        from tqsdk import TqApi, tafunc
+
+        api = TqApi()
+        quote = api.get_quote("SHFE.cu2006")
+        ks = api.get_kline_serial("SHFE.cu2006", 24 * 60 * 60, 10)
+        v = tafunc.get_his_volatility(ks, quote)  # 历史波动率
+
+        option = api.get_quote("SHFE.cu2006C45000")
+        klines = api.get_kline_serial(["SHFE.cu2006C45000", "SHFE.cu2006"], 24 * 60 * 60, 10)
+        t = tafunc.get_t(klines, option.expire_datetime)
+        impv = tafunc.get_impv(klines["close1"], klines["close"], 45000, 0.025, v, t, "CALL")
+        delta = tafunc.get_delta(klines["close1"], 45000, 0.025, v, t, "CALL")
+        print("delta", list(delta))
+        api.close()
+
+    """
+    if option_class not in ["CALL", "PUT"]:
+        return pd.Series(np.full_like(series, float('nan')))
+    o = 1 if option_class == "CALL" else -1
+    if d1 is None:
+        d1 = _get_d1(series, k, r, v, t)
+    return pd.Series(np.where(np.isnan(d1), np.nan, pd.Series(o * _get_cdf(o * d1))))
+
+
+def get_gamma(series, k, r, v, t, d1=None):
+    """
+    计算期权希腊指标 gamma 值
+
+    Args:
+        series (pandas.Series): 标的价格序列
+
+        k (float): 期权行权价
+
+        r (float): 无风险利率
+
+        v (float / pandas.Series): 波动率
+
+            * float: 对于 series 中每个元素都使用相同的 v 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 v 中对应的值计算理论价
+
+        t (float / pandas.Series): 年化到期时间，例如：还有 100 天到期，则年化到期时间为 100/360
+
+            * float: 对于 series 中每个元素都使用相同的 t 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 t 中对应的值计算理论价
+
+        d1 (None | pandas.Series): [可选] 序列对应的 BS 公式中 b1 值
+
+    Returns:
+        pandas.Series: 该序列的 gamma 值
+
+
+    Example::
+
+        import pandas as pd
+        from tqsdk import TqApi, tafunc
+
+        api = TqApi()
+        quote = api.get_quote("SHFE.cu2006")
+        ks = api.get_kline_serial("SHFE.cu2006", 24 * 60 * 60, 10)
+        v = tafunc.get_his_volatility(ks, quote)  # 历史波动率
+
+        option = api.get_quote("SHFE.cu2006C45000")
+        klines = api.get_kline_serial(["SHFE.cu2006C45000", "SHFE.cu2006"], 24 * 60 * 60, 10)
+        t = tafunc.get_t(klines, option.expire_datetime)
+        impv = tafunc.get_impv(klines["close1"], klines["close"], 45000, 0.025, v, t, "CALL")
+        gamma = tafunc.get_gamma(klines["close1"], 45000, 0.025, v, t)
+        print("gamma", list(gamma))
+        api.close()
+
+    """
+    if d1 is None:
+        d1 = _get_d1(series, k, r, v, t)
+    return pd.Series(np.where(np.isnan(d1), np.nan, _get_pdf(d1) / (series * v * np.sqrt(t))))
+
+
+def get_theta(series, k, r, v, t, option_class, d1=None):
+    """
+    计算期权希腊指标 theta 值
+
+    Args:
+        series (pandas.Series): 标的价格序列
+
+        k (float): 期权行权价
+
+        r (float): 无风险利率
+
+        v (float / pandas.Series): 波动率
+
+            * float: 对于 series 中每个元素都使用相同的 v 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 v 中对应的值计算理论价
+
+        t (float / pandas.Series): 年化到期时间，例如：还有 100 天到期，则年化到期时间为 100/360
+
+            * float: 对于 series 中每个元素都使用相同的 t 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 t 中对应的值计算理论价
+
+        option_class (str): 期权方向，必须是 "CALL" 或者 "PUT"，否则返回的序列值全部为 nan
+
+        d1 (None | pandas.Series): [可选] 序列对应的 BS 公式中 b1 值
+
+    Returns:
+        pandas.Series: 该序列的 theta 值
+
+
+    Example::
+
+        import pandas as pd
+        from tqsdk import TqApi, tafunc
+
+        api = TqApi()
+        quote = api.get_quote("SHFE.cu2006")
+        ks = api.get_kline_serial("SHFE.cu2006", 24 * 60 * 60, 10)
+        v = tafunc.get_his_volatility(ks, quote)  # 历史波动率
+
+        option = api.get_quote("SHFE.cu2006C45000")
+        klines = api.get_kline_serial(["SHFE.cu2006C45000", "SHFE.cu2006"], 24 * 60 * 60, 10)
+        t = tafunc.get_t(klines, option.expire_datetime)
+        impv = tafunc.get_impv(klines["close1"], klines["close"], 45000, 0.025, v, t, "CALL")
+        theta = tafunc.get_theta(klines["close1"], 45000, 0.025, v, t, "CALL")
+        print("theta", list(theta))
+        api.close()
+
+    """
+    if option_class not in ["CALL", "PUT"]:
+        return pd.Series(np.full_like(series, float('nan')))
+    o = 1 if option_class == "CALL" else -1
+    if d1 is None:
+        d1 = _get_d1(series, k, r, v, t)
+    d2 = pd.Series(np.where(np.isnan(d1), np.nan, d1 - v * np.sqrt(t)))
+    return pd.Series(np.where(np.isnan(d1), np.nan, pd.Series(
+        -v * series * _get_pdf(d1) / (2 * np.sqrt(t)) - o * r * k * np.exp(-r * t) * _get_cdf(o * d2))))
+
+
+def get_vega(series, k, r, v, t, d1=None):
+    """
+    计算期权希腊指标 vega 值
+
+    Args:
+        series (pandas.Series): 标的价格序列
+
+        k (float): 期权行权价
+
+        r (float): 无风险利率
+
+        v (float / pandas.Series): 波动率
+
+            * float: 对于 series 中每个元素都使用相同的 v 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 v 中对应的值计算理论价
+
+        t (float / pandas.Series): 年化到期时间，例如：还有 100 天到期，则年化到期时间为 100/360
+
+            * float: 对于 series 中每个元素都使用相同的 t 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 t 中对应的值计算理论价
+
+        d1 (None | pandas.Series): [可选] 序列对应的 BS 公式中 b1 值
+
+    Returns:
+        pandas.Series: 该序列的 vega 值
+
+
+    Example::
+
+        import pandas as pd
+        from tqsdk import TqApi, tafunc
+
+        api = TqApi()
+        quote = api.get_quote("SHFE.cu2006")
+        ks = api.get_kline_serial("SHFE.cu2006", 24 * 60 * 60, 10)
+        v = tafunc.get_his_volatility(ks, quote)  # 历史波动率
+
+        option = api.get_quote("SHFE.cu2006C45000")
+        klines = api.get_kline_serial(["SHFE.cu2006C45000", "SHFE.cu2006"], 24 * 60 * 60, 10)
+        t = tafunc.get_t(klines, option.expire_datetime)
+        impv = tafunc.get_impv(klines["close1"], klines["close"], 45000, 0.025, v, t, "CALL")
+        vega = tafunc.get_vega(klines["close1"], 45000, 0.025, v, t)
+        print("vega", list(vega))
+        api.close()
+
+    """
+    if d1 is None:
+        d1 = _get_d1(series, k, r, v, t)
+    return pd.Series(np.where(np.isnan(d1), np.nan, series * np.sqrt(t) * _get_pdf(d1)))
+
+
+def get_rho(series, k, r, v, t, option_class, d1=None):
+    """
+    计算期权希腊指标 rho 值
+
+    Args:
+        series (pandas.Series): 标的价格序列
+
+        k (float): 期权行权价
+
+        r (float): 无风险利率
+
+        v (float / pandas.Series): 波动率
+
+            * float: 对于 series 中每个元素都使用相同的 v 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 v 中对应的值计算理论价
+
+        t (float / pandas.Series): 年化到期时间，例如：还有 100 天到期，则年化到期时间为 100/360
+
+            * float: 对于 series 中每个元素都使用相同的 t 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 t 中对应的值计算理论价
+
+        option_class (str): 期权方向，必须是 "CALL" 或者 "PUT"，否则返回的序列值全部为 nan
+
+        d1 (None | pandas.Series): [可选] 序列对应的 BS 公式中 b1 值
+
+    Returns:
+        pandas.Series: 该序列的 rho 值
+
+
+    Example::
+
+        import pandas as pd
+        from tqsdk import TqApi, tafunc
+
+        api = TqApi()
+        quote = api.get_quote("SHFE.cu2006")
+        ks = api.get_kline_serial("SHFE.cu2006", 24 * 60 * 60, 10)
+        v = tafunc.get_his_volatility(ks, quote)  # 历史波动率
+
+        option = api.get_quote("SHFE.cu2006C45000")
+        klines = api.get_kline_serial(["SHFE.cu2006C45000", "SHFE.cu2006"], 24 * 60 * 60, 10)
+        t = tafunc.get_t(klines, option.expire_datetime)
+        impv = tafunc.get_impv(klines["close1"], klines["close"], 45000, 0.025, v, t, "CALL")
+        rho = tafunc.get_rho(klines["close1"], 45000, 0.025, v, t, "CALL")
+        print("rho", list(rho))
+        api.close()
+
+    """
+    if option_class not in ["CALL", "PUT"]:
+        return pd.Series(np.full_like(series, float('nan')))
+    o = 1 if option_class == "CALL" else -1
+    if d1 is None:
+        d1 = _get_d1(series, k, r, v, t)
+    d2 = pd.Series(np.where(np.isnan(d1), np.nan, d1 - v * np.sqrt(t)))
+    return pd.Series(np.where(np.isnan(d1), np.nan, o * k * t * np.exp(-r * t) * _get_cdf(o * d2)))
+
+
+def get_impv(series, series_option, k, r, init_v, t, option_class):
+    """
+    计算期权隐含波动率
+
+    Args:
+        series (pandas.Series): 标的价格序列
+
+        series_option (pandas.Series): 期权价格序列，与 series 长度应该相同
+
+        k (float): 期权行权价
+
+        r (float): 无风险利率
+
+        init_v (float / pandas.Series): 初始波动率，迭代初始值
+
+            * float: 对于 series 中每个元素都使用相同的 init_v 计算隐含波动率
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 init_v 中对应的值计算隐含波动率
+
+        t (float / pandas.Series): 年化到期时间，例如：还有 100 天到期，则年化到期时间为 100/360
+
+            * float: 对于 series 中每个元素都使用相同的 t 计算理论价
+
+            * pandas.Series: 其元素个数应该和 series 元素个数相同，对于 series 中每个元素都使用 t 中对应的值计算理论价
+
+        option_class (str): 期权方向，必须是 "CALL" 或者 "PUT"，否则返回的序列值全部为 nan
+
+    Returns:
+        pandas.Series: 该序列的隐含波动率
+
+
+    Example::
+
+        import pandas as pd
+        from tqsdk import TqApi, tafunc
+
+        api = TqApi()
+        quote = api.get_quote("SHFE.cu2006")
+        ks = api.get_kline_serial("SHFE.cu2006", 24 * 60 * 60, 10)
+        v = tafunc.get_his_volatility(ks, quote)  # 历史波动率
+
+        option = api.get_quote("SHFE.cu2006C45000")
+        klines = api.get_kline_serial(["SHFE.cu2006C45000", "SHFE.cu2006"], 24 * 60 * 60, 10)
+        t = tafunc.get_t(klines, option.expire_datetime)
+        impv = tafunc.get_impv(klines["close1"], klines["close"], 45000, 0.025, v, t, "CALL")
+        print("impv", list((impv * 100).round(2)))
+        api.close()
+    """
+    if option_class not in ["CALL", "PUT"]:
+        return pd.Series(np.full_like(series, float('nan')))
+    o = 1 if option_class == "CALL" else -1
+    lower_limit = o * (series - k * np.exp(-r * t))
+    x = pd.Series(np.where((series_option < lower_limit) | (t <= 0), np.nan, init_v))
+    y = pd.Series(np.where(np.isnan(x), np.nan, get_bs_price(series, k, r, x, t, option_class)))
+    vega = get_vega(series, k, r, x, t)
+    diff_x = pd.Series(np.where(np.isnan(vega) | (vega < 1e-8), np.nan, (series_option - y) / vega))
+    while not pd.DataFrame.all((np.abs(series_option - y) < 1e-8) | np.isnan(diff_x)):
+        x = pd.Series(np.where(np.isnan(x) | np.isnan(diff_x), x,
+                               np.where(x + diff_x < 0, x / 2,
+                                        np.where(diff_x > x / 2, x * 1.5, x + diff_x))))
+        y = pd.Series(np.where(np.isnan(x), np.nan, get_bs_price(series, k, r, x, t, option_class)))
+        vega = get_vega(series, k, r, x, t)
+        diff_x = pd.Series(np.where(np.isnan(vega) | (vega < 1e-8), np.nan, (series_option - y) / vega))
+    return x
+
+
+def get_ticks_info(df):
+    """
+    计算 ticks 开平方向
+
+    Args:
+        df (pandas.DataFrame): Dataframe 格式的 ticks 序列
+
+    Returns:
+        pandas.Series: 返回序列的开平方向序列
+
+    Example::
+
+        from tqsdk import TqApi, tafunc
+
+        api = TqApi()
+        ticks = api.get_tick_serial('SHFE.cu2006', 100)
+        ticksinfo = tafunc.get_ticks_info(ticks)
+        for i, v in ticksinfo.items():
+            print(f"{tafunc.time_to_str(ticks['datetime'][i])[5:21]}  {ticks['last_price'][i]}  {v}")
+        api.close()
+
+        # 预计的输出是这样的:
+        04-27 10:54:11.5   42640.0   多换
+        04-27 10:54:12.0   42640.0   多换
+        04-27 10:54:16.5   42640.0   多换
+        ......
+        04-27 10:55:10.0   42660.0   双平
+        04-27 10:55:10.5   42660.0   双平
+        04-27 10:55:14.0   42670.0   双平
+    """
+    if "open_interest" not in df.keys():  # df 不是 ticks 是 klines
+        raise Exception(f"get_ticks_info 参数必须是 ticks，由 api.get_tick_serial 返回的对象。")
+    df_pre = df.copy().shift(1)
+    df_pre["price_diff"] = df["last_price"] - df_pre["last_price"]
+    df_pre["oi_diff"] = df["open_interest"] - df_pre["open_interest"]
+    df_pre["vol_diff"] = df["volume"] - df_pre["volume"]
+    df_pre["pc"] = np.where(df["last_price"] <= df_pre["bid_price1"], -1,
+                            np.where(df["last_price"] >= df_pre["ask_price1"], 1, np.sign(df_pre["price_diff"])))
+    pc_g = df_pre["pc"] > 0
+    df_pre["info"] = pd.Series(np.where(df_pre["oi_diff"] > 0, np.where(pc_g, "多开", "空开"),
+                                        np.where(df_pre["oi_diff"] < 0, np.where(pc_g, "空平", "多平"),
+                                                 np.where(df_pre["oi_diff"] == 0, np.where(pc_g, "多换", "空换"), ""))),
+                               dtype=pd.StringDtype())
+    df_pre.loc[df_pre["pc"] == 0, "info"] = "换手"
+    df_pre.loc[(df_pre["oi_diff"] < 0) & (df_pre["oi_diff"] + df_pre["vol_diff"] == 0), "info"] = "双平"
+    df_pre.loc[(df_pre["oi_diff"] > 0) & (df_pre["oi_diff"] == df_pre["vol_diff"]), "info"] = "双开"
+    df_pre.loc[df_pre["vol_diff"] == 0, "info"] = ""
+    return df_pre["info"]

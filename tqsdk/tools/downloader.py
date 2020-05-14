@@ -4,7 +4,12 @@ __author__ = 'yangyang'
 
 import csv
 from datetime import date, datetime
+from typing import Union, List
+
 from tqsdk.api import TqApi
+from tqsdk.datetime import _get_trading_day_start_time, _get_trading_day_end_time
+from tqsdk.diff import _get_obj
+from tqsdk.utils import _generate_uuid
 
 
 class DataDownloader:
@@ -14,7 +19,8 @@ class DataDownloader:
     多合约按时间横向对齐
     """
 
-    def __init__(self, api, symbol_list, dur_sec, start_dt, end_dt, csv_file_name):
+    def __init__(self, api: TqApi, symbol_list: Union[str, List[str]], dur_sec: int, start_dt: Union[date, datetime],
+                 end_dt: Union[date, datetime], csv_file_name: str) -> None:
         """
         创建历史数据下载器实例
 
@@ -33,7 +39,7 @@ class DataDownloader:
 
         Example::
 
-            from datetime import datetime
+            from datetime import datetime, date
             from contextlib import closing
             from tqsdk import TqApi, TqSim
             from tqsdk.tools import DataDownloader
@@ -60,79 +66,81 @@ class DataDownloader:
                     api.wait_update()
                     print("progress: ", { k:("%.2f%%" % v.get_progress()) for k,v in download_tasks.items() })
         """
-        self.api = api
+        self._api = api
         if isinstance(start_dt, datetime):
-            self.start_dt_nano = int(start_dt.timestamp() * 1e9)
+            self._start_dt_nano = int(start_dt.timestamp() * 1e9)
         else:
-            self.start_dt_nano = TqApi._get_trading_day_start_time(
-                int(datetime(start_dt.year, start_dt.month, start_dt.day).timestamp()) * 1000000000)
+            self._start_dt_nano = _get_trading_day_start_time(int(datetime(start_dt.year, start_dt.month, start_dt.day).timestamp()) * 1000000000)
         if isinstance(end_dt, datetime):
-            self.end_dt_nano = int(end_dt.timestamp() * 1e9)
+            self._end_dt_nano = int(end_dt.timestamp() * 1e9)
         else:
-            self.end_dt_nano = TqApi._get_trading_day_end_time(
-                int(datetime(end_dt.year, end_dt.month, end_dt.day).timestamp()) * 1000000000)
-        self.current_dt_nano = self.start_dt_nano
-        self.symbol_list = symbol_list if isinstance(symbol_list, list) else [symbol_list]
-        self.dur_nano = dur_sec * 1000000000
-        if self.dur_nano == 0 and len(self.symbol_list) != 1:
+            self._end_dt_nano = _get_trading_day_end_time(int(datetime(end_dt.year, end_dt.month, end_dt.day).timestamp()) * 1000000000)
+        self._current_dt_nano = self._start_dt_nano
+        self._symbol_list = symbol_list if isinstance(symbol_list, list) else [symbol_list]
+        # 检查合约代码是否存在
+        for symbol in self._symbol_list:
+            if (not self._api._stock) and symbol not in self._api._data.get("quotes", {}):
+                raise Exception("代码 %s 不存在, 请检查合约代码是否填写正确" % (symbol))
+        self._dur_nano = dur_sec * 1000000000
+        if self._dur_nano == 0 and len(self._symbol_list) != 1:
             raise Exception("Tick序列不支持多合约")
-        self.csv_file_name = csv_file_name
-        self.task = self.api.create_task(self._download_data())
+        self._csv_file_name = csv_file_name
+        self._task = self._api.create_task(self._download_data())
 
-    def is_finished(self):
+    def is_finished(self) -> bool:
         """
         判断是否下载完成
 
         Returns:
             bool: 如果数据下载完成则返回 True, 否则返回 False.
         """
-        return self.task.done()
+        return self._task.done()
 
-    def get_progress(self):
+    def get_progress(self) -> float:
         """
         获得下载进度百分比
 
         Returns:
             float: 下载进度,100表示下载完成
         """
-        return 100.0 if self.task.done() else (self.current_dt_nano - self.start_dt_nano) / (
-                    self.end_dt_nano - self.start_dt_nano) * 100
+        return 100.0 if self._task.done() else (self._current_dt_nano - self._start_dt_nano) / (
+                self._end_dt_nano - self._start_dt_nano) * 100
 
     async def _download_data(self):
         """下载数据, 多合约横向按时间对齐"""
         chart_info = {
             "aid": "set_chart",
-            "chart_id": self.api._generate_chart_id("downloader", self.symbol_list, self.dur_nano),
-            "ins_list": ",".join(self.symbol_list),
-            "duration": self.dur_nano,
+            "chart_id": _generate_uuid("PYSDK_downloader"),
+            "ins_list": ",".join(self._symbol_list),
+            "duration": self._dur_nano,
             "view_width": 2000,
-            "focus_datetime": self.start_dt_nano,
+            "focus_datetime": self._start_dt_nano,
             "focus_position": 0,
         }
         # 还没有发送过任何请求, 先请求定位左端点
-        await self.api._send_chan.send(chart_info)
-        chart = self.api._get_obj(self.api._data, ["charts", chart_info["chart_id"]])
+        await self._api._send_chan.send(chart_info)
+        chart = _get_obj(self._api._data, ["charts", chart_info["chart_id"]])
         current_id = None  # 当前数据指针
         csv_header = []
-        data_cols = ["open", "high", "low", "close", "volume", "open_oi", "close_oi"] if self.dur_nano != 0 else \
+        data_cols = ["open", "high", "low", "close", "volume", "open_oi", "close_oi"] if self._dur_nano != 0 else \
             ["last_price", "highest", "lowest", "bid_price1", "bid_volume1", "ask_price1", "ask_volume1", "volume",
              "amount", "open_interest"]
         serials = []
-        for symbol in self.symbol_list:
-            path = ["klines", symbol, str(self.dur_nano)] if self.dur_nano != 0 else ["ticks", symbol]
-            serial = self.api._get_obj(self.api._data, path)
+        for symbol in self._symbol_list:
+            path = ["klines", symbol, str(self._dur_nano)] if self._dur_nano != 0 else ["ticks", symbol]
+            serial = _get_obj(self._api._data, path)
             serials.append(serial)
         try:
-            with open(self.csv_file_name, 'w', newline='') as csvfile:
+            with open(self._csv_file_name, 'w', newline='') as csvfile:
                 csv_writer = csv.writer(csvfile, dialect='excel')
-                async with self.api.register_update_notify() as update_chan:
+                async with self._api.register_update_notify() as update_chan:
                     async for _ in update_chan:
-                        if not (chart_info.items() <= self.api._get_obj(chart, ["state"]).items()):
+                        if not (chart_info.items() <= _get_obj(chart, ["state"]).items()):
                             # 当前请求还没收齐回应, 不应继续处理
                             continue
                         left_id = chart.get("left_id", -1)
                         right_id = chart.get("right_id", -1)
-                        if (left_id == -1 and right_id == -1) or self.api._data.get("mdhis_more_data", True):
+                        if (left_id == -1 and right_id == -1) or self._api._data.get("mdhis_more_data", True):
                             # 定位信息还没收到, 或数据序列还没收到
                             continue
                         for serial in serials:
@@ -143,40 +151,40 @@ class DataDownloader:
                             current_id = max(left_id, 0)
                         while current_id <= right_id:
                             item = serials[0]["data"].get(str(current_id), {})
-                            if item.get("datetime", 0) == 0 or item["datetime"] > self.end_dt_nano:
+                            if item.get("datetime", 0) == 0 or item["datetime"] > self._end_dt_nano:
                                 # 当前 id 已超出 last_id 或k线数据的时间已经超过用户限定的右端
                                 return
                             if len(csv_header) == 0:
                                 # 写入文件头
                                 csv_header = ["datetime"]
-                                for symbol in self.symbol_list:
+                                for symbol in self._symbol_list:
                                     for col in data_cols:
                                         csv_header.append(symbol + "." + col)
                                 csv_writer.writerow(csv_header)
                             row = [self._nano_to_str(item["datetime"])]
                             for col in data_cols:
                                 row.append(self._get_value(item, col))
-                            for i in range(1, len(self.symbol_list)):
-                                symbol = self.symbol_list[i]
+                            for i in range(1, len(self._symbol_list)):
+                                symbol = self._symbol_list[i]
                                 tid = serials[0].get("binding", {}).get(symbol, {}).get(str(current_id), -1)
                                 k = {} if tid == -1 else serials[i]["data"].get(str(tid), {})
                                 for col in data_cols:
                                     row.append(self._get_value(k, col))
                             csv_writer.writerow(row)
                             current_id += 1
-                            self.current_dt_nano = item["datetime"]
+                            self._current_dt_nano = item["datetime"]
                         # 当前 id 已超出订阅范围, 需重新订阅后续数据
                         chart_info.pop("focus_datetime", None)
                         chart_info.pop("focus_position", None)
                         chart_info["left_kline_id"] = current_id
-                        await self.api._send_chan.send(chart_info)
+                        await self._api._send_chan.send(chart_info)
         finally:
             # 释放chart资源
-            await self.api._send_chan.send({
+            await self._api._send_chan.send({
                 "aid": "set_chart",
                 "chart_id": chart_info["chart_id"],
                 "ins_list": "",
-                "duration": self.dur_nano,
+                "duration": self._dur_nano,
                 "view_width": 2000,
             })
 

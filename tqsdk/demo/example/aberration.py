@@ -12,16 +12,15 @@ from tqsdk import TqApi, TargetPosTask
 from tqsdk.ta import BOLL
 
 # 设置合约代码
-SYMBOL = "DCE.i2001"
+SYMBOL = "DCE.i2005"
 api = TqApi()
 quote = api.get_quote(SYMBOL)
-klines = api.get_kline_serial(SYMBOL, 60*60*24)
+klines = api.get_kline_serial(SYMBOL, 60 * 60 * 24)
 position = api.get_position(SYMBOL)
 target_pos = TargetPosTask(api, SYMBOL)
 
+
 # 使用BOLL指标计算中轨、上轨和下轨，其中26为周期N  ，2为参数p
-
-
 def boll_line(klines):
     boll = BOLL(klines, 26, 2)
     midline = boll["mid"].iloc[-1]
@@ -45,11 +44,11 @@ while True:
         if position.pos_long == 0 and position.pos_short == 0:
             # 如果最新价大于上轨，K线上穿上轨，开多仓
             if quote.last_price > topline:
-                print("最新价大于上轨，K线上穿上轨，开多仓")
+                print("K线上穿上轨，开多仓")
                 target_pos.set_target_volume(20)
             # 如果最新价小于轨，K线下穿下轨，开空仓
             elif quote.last_price < bottomline:
-                print("最新价大于上轨，K线上穿上轨，开多仓")
+                print("K线下穿下轨，开空仓")
                 target_pos.set_target_volume(-20)
             else:
                 print("当前最新价%.2f,未穿上轨或下轨，不开仓" % quote.last_price)

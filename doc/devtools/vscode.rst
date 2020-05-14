@@ -10,7 +10,7 @@
 
 安装天勤 Vs Code插件
 ----------------------------------------------------
-在  Vs Code extension 中输入 "天勤量化"或“tqsdk”, 点击【install】按钮
+在  Vs Code extension 中输入 "天勤量化"或“tqsdk”, 点击【install】按钮，同时第一次使用Vs Code 还需配置安装 “Pyhton” 插件
 
 .. figure:: ../images/vscode_install.png
 
@@ -29,7 +29,7 @@
 
 .. figure:: ../images/vscode_click_tianqinlianghua.png
 
-祝贺你， Vs Code插件已经安装配置完毕，可以开始使用了
+祝贺你， Vs Code插件已经安装配置完毕，可以开始使用了, 程序运行后会在右侧自动显示图表
 
 
 Vs Code插件策略运行
@@ -68,26 +68,31 @@ Vs Code插件回测策略
 
 .. figure:: ../images/vscode_backtest_setting_finished.png
 
-回测策略程序时，策略交易记录和日志同样会在天勤面板中输出
+回测策略程序时，策略交易记录和日志同样会在天勤面板中输出，同时策略报告图会在右侧显示
+
+.. figure:: ../images/vscode_backtest_report.png
+
+.. figure:: ../images/vscode_backtest_report_detail.png
 
 
 Vs Code插件复盘行情
 ----------------------------------------------------
-在Vs Code中提供和天勤终端一致的历史复盘功能，只需点击右下角【复盘控制器 展开】即可
-
-.. figure:: ../images/vscode_repaly.png
-
-打开复盘，依次点击日期框，选择历史复盘具体日期，然后点击确定，历史复盘环境即开始创建
+在Vs Code中提供和 TqSdk 中一样的复盘功能，首先右键进入天勤参数中选择复盘的具体日期
 
 .. figure:: ../images/vscode_setting_config.png
 
-复盘环境创建完成之后，复盘状态会显示为暂停中，这时选择需要在复盘环境中运行的策略，右键点击【复盘环境运行策略文件】
+复盘具体日期选择完毕后，右键选择 【复盘模式运行策略文件】
 
 .. figure:: ../images/vscode_run_replay.png
 
+图形界面上方可以选择暂停，加减速复盘运行
+
+.. figure:: ../images/vscode_replay_speed.png
+
+
 在Vs Code插件中绘图形
 --------------------------------------------------------------------------
-策略在Vs Code插件版运行时，也可以进行自定义指标绘图，具体操作请参见  :ref:`draw_indicator`
+策略在Vs Code插件版运行时，也可以进行自定义指标绘图，具体操作请参见  :ref:`demo` 中t90——t95
 
 
 策略程序打包成独立应用程序
